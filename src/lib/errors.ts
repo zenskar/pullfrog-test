@@ -4,6 +4,7 @@
  */
 
 export const ERROR_CODES = [
+  "credit_exceeds_invoice",
   "not_found",
   "validation_failed",
   "currency_mismatch",
@@ -14,6 +15,7 @@ export const ERROR_CODES = [
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 const STATUS_BY_CODE = {
+  credit_exceeds_invoice: 422,
   currency_mismatch: 422,
   invalid_state: 409,
   not_found: 404,
