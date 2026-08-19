@@ -32,8 +32,19 @@ export interface Invoice {
   lineItems: LineItem[];
 }
 
+export interface CreditNote {
+  id: string;
+  tenantId: string;
+  invoiceId: string;
+  reason: string;
+  amountMinor: number;
+  currency: string;
+  notifyEmail?: string;
+}
+
 const customers = new Map<string, Customer>();
 const invoices = new Map<string, Invoice>();
+const creditNotes = new Map<string, CreditNote>();
 
 let sequence = 0;
 
@@ -77,9 +88,25 @@ export function listInvoices(tenantId: string): Invoice[] {
   );
 }
 
+export function putCreditNote(note: CreditNote): CreditNote {
+  creditNotes.set(note.id, note);
+  return note;
+}
+
+export function getInvoiceById(id: string): Invoice | undefined {
+  return invoices.get(id);
+}
+
+export function getCreditNotesForInvoice(invoiceId: string): CreditNote[] {
+  return [...creditNotes.values()].filter(
+    (note) => note.invoiceId === invoiceId
+  );
+}
+
 /** Test-only. Keeps suites independent of each other's writes. */
 export function resetStore(): void {
   customers.clear();
   invoices.clear();
+  creditNotes.clear();
   sequence = 0;
 }

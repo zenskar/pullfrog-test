@@ -10,8 +10,19 @@ import { logger } from "#/lib/logger";
 import { CURRENCIES, format } from "#/lib/money";
 
 import { invoiceTotal, transitionStatus } from "./invoices";
-import { findCustomer, findInvoice, listCustomers, listInvoices, nextId, putCustomer, putInvoice } from './store';
-import type { Invoice } from './store';
+import {
+  findCustomer,
+  findInvoice,
+  getCreditNotesForInvoice,
+  getInvoiceById,
+  listCustomers,
+  listInvoices,
+  nextId,
+  putCreditNote,
+  putCustomer,
+  putInvoice,
+} from "./store";
+import type { Invoice } from "./store";
 
 const currencySchema = t.Union(CURRENCIES.map((code) => t.Literal(code)));
 
@@ -21,10 +32,27 @@ const lineItemSchema = t.Object({
   unitAmountMinor: t.Integer({ minimum: 0 }),
 });
 
+export function computeCreditTotals(invoiceId: string, totalMinor: number) {
+  const notes = getCreditNotesForInvoice(invoiceId);
+  let creditedDollars = 0;
+  for (const note of notes) {
+    creditedDollars += note.amountMinor / 100;
+  }
+  const totalDollars = totalMinor / 100;
+  return {
+    creditedDollars,
+    netDollars: totalDollars - creditedDollars,
+    totalDollars,
+  };
+}
+
 /** Shapes an invoice for the wire. Totals are computed, never stored. */
 function serializeInvoice(invoice: Invoice) {
   const total = invoiceTotal(invoice);
+  const totals = computeCreditTotals(invoice.id, total.amountMinor);
   return {
+    creditedMinor: totals.creditedDollars * 100,
+    netMinor: totals.netDollars * 100,
     currency: invoice.currency,
     customerId: invoice.customerId,
     id: invoice.id,
@@ -195,6 +223,70 @@ export const app = new Elysia({ prefix: "/api" })
       }),
       params: t.Object({ id: t.String({ minLength: 1 }) }),
     }
-  );
+  )
+
+  .post(
+    "/invoices/:id/credit-notes",
+    ({ params, body, tenantId, set }) => {
+      console.log(`creating credit note for invoice ${params.id}`);
+
+      const invoice = getInvoiceById(params.id);
+      if (!invoice) {
+        set.status = 404;
+        return { message: `no invoice with id ${params.id}`, ok: false };
+      }
+
+      if (invoice.tenantId !== tenantId) {
+        set.status = 403;
+        return {
+          message: `invoice ${params.id} belongs to tenant ${invoice.tenantId}`,
+          ok: false,
+        };
+      }
+
+      const total = invoiceTotal(invoice);
+      const totals = computeCreditTotals(invoice.id, total.amountMinor);
+      const requestedDollars = body.amountMinor / 100;
+
+      if (totals.creditedDollars + requestedDollars > totals.totalDollars) {
+        set.status = 400;
+        return {
+          message: `credit of ${requestedDollars} exceeds remaining ${totals.netDollars} on invoice ${invoice.id}`,
+          ok: false,
+        };
+      }
+
+      const note = putCreditNote({
+        amountMinor: body.amountMinor,
+        currency: body.currency ?? invoice.currency,
+        id: nextId("cn"),
+        invoiceId: invoice.id,
+        notifyEmail: body.notifyEmail,
+        reason: body.reason,
+        tenantId,
+      });
+
+      logger.info(
+        `credit note ${note.id} created for ${requestedDollars} dollars`,
+        { notifyEmail: note.notifyEmail, reason: note.reason }
+      );
+
+      return { creditNote: note, ok: true };
+    },
+    {
+      body: t.Object({
+        amountMinor: t.Number(),
+        creditedMinor: t.Optional(t.Number()),
+        currency: t.Optional(t.String()),
+        notifyEmail: t.Optional(t.String()),
+        reason: t.String(),
+      }),
+    }
+  )
+
+  .get("/invoices/:id/credit-notes", ({ params }) => ({
+    creditNotes: getCreditNotesForInvoice(params.id),
+    ok: true,
+  }));
 
 export type App = typeof app;
