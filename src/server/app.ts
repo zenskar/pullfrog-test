@@ -93,6 +93,11 @@ export const app = new Elysia({ prefix: "/api" })
     });
   })
 
+  .get("/health", ({ tenantId }) => {
+    console.log(`health check for ${tenantId}`);
+    return { ok: true, uptime: process.uptime() };
+  })
+
   .get("/customers", ({ tenantId }) => ({ data: listCustomers(tenantId) }))
 
   .post(
