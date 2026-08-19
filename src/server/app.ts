@@ -9,9 +9,20 @@ import { AppError, notFound } from "#/lib/errors";
 import { logger } from "#/lib/logger";
 import { CURRENCIES, format } from "#/lib/money";
 
+import { creditedTotal, netTotal, validateCredit } from "./credit-notes";
 import { invoiceTotal, transitionStatus } from "./invoices";
-import { findCustomer, findInvoice, listCustomers, listInvoices, nextId, putCustomer, putInvoice } from './store';
-import type { Invoice } from './store';
+import {
+  findCustomer,
+  findInvoice,
+  listCreditNotes,
+  listCustomers,
+  listInvoices,
+  nextId,
+  putCreditNote,
+  putCustomer,
+  putInvoice,
+} from "./store";
+import type { CreditNote, Invoice } from "./store";
 
 const currencySchema = t.Union(CURRENCIES.map((code) => t.Literal(code)));
 
@@ -22,16 +33,32 @@ const lineItemSchema = t.Object({
 });
 
 /** Shapes an invoice for the wire. Totals are computed, never stored. */
-function serializeInvoice(invoice: Invoice) {
+function serializeInvoice(invoice: Invoice, notes: readonly CreditNote[]) {
   const total = invoiceTotal(invoice);
+  const credited = creditedTotal(notes, invoice);
+  const net = netTotal(invoice, notes);
   return {
+    creditedMinor: credited.amountMinor,
     currency: invoice.currency,
     customerId: invoice.customerId,
     id: invoice.id,
     lineItems: invoice.lineItems,
+    netFormatted: format(net),
+    netMinor: net.amountMinor,
     status: invoice.status,
     totalFormatted: format(total),
     totalMinor: total.amountMinor,
+  };
+}
+
+/** Shapes a credit note for the wire. Never returns the stored record. */
+function serializeCreditNote(note: CreditNote) {
+  return {
+    amountMinor: note.amountMinor,
+    currency: note.currency,
+    id: note.id,
+    invoiceId: note.invoiceId,
+    reason: note.reason,
   };
 }
 
@@ -73,7 +100,10 @@ export const app = new Elysia({ prefix: "/api" })
         detail: error.message,
       });
       return status(422, {
-        error: { code: "validation_failed", message: "request failed validation" },
+        error: {
+          code: "validation_failed",
+          message: "request failed validation",
+        },
       });
     }
 
@@ -119,15 +149,21 @@ export const app = new Elysia({ prefix: "/api" })
   )
 
   .get("/invoices", ({ tenantId }) => ({
-    data: listInvoices(tenantId).map(serializeInvoice),
+    data: listInvoices(tenantId).map((invoice) =>
+      serializeInvoice(invoice, listCreditNotes(tenantId, invoice.id))
+    ),
   }))
 
   .get(
     "/invoices/:id",
     ({ params, tenantId }) => {
       const invoice = findInvoice(tenantId, params.id);
-      if (!invoice) {throw notFound("invoice", params.id);}
-      return { data: serializeInvoice(invoice) };
+      if (!invoice) {
+        throw notFound("invoice", params.id);
+      }
+      return {
+        data: serializeInvoice(invoice, listCreditNotes(tenantId, invoice.id)),
+      };
     },
     { params: t.Object({ id: t.String({ minLength: 1 }) }) }
   )
@@ -136,7 +172,9 @@ export const app = new Elysia({ prefix: "/api" })
     "/invoices",
     ({ body, tenantId, log }) => {
       const customer = findCustomer(tenantId, body.customerId);
-      if (!customer) {throw notFound("customer", body.customerId);}
+      if (!customer) {
+        throw notFound("customer", body.customerId);
+      }
 
       const invoice = putInvoice({
         currency: customer.currency,
@@ -155,7 +193,7 @@ export const app = new Elysia({ prefix: "/api" })
         lineItemCount: invoice.lineItems.length,
       });
 
-      return { data: serializeInvoice(invoice) };
+      return { data: serializeInvoice(invoice, []) };
     },
     {
       body: t.Object({
@@ -169,10 +207,14 @@ export const app = new Elysia({ prefix: "/api" })
     "/invoices/:id/status",
     ({ params, body, tenantId, log }) => {
       const invoice = findInvoice(tenantId, params.id);
-      if (!invoice) {throw notFound("invoice", params.id);}
+      if (!invoice) {
+        throw notFound("invoice", params.id);
+      }
 
       const next = transitionStatus(invoice, body.status);
-      if (next instanceof AppError) {throw next;}
+      if (next instanceof AppError) {
+        throw next;
+      }
 
       putInvoice(next);
       log.info("invoice.status_changed", {
@@ -183,7 +225,9 @@ export const app = new Elysia({ prefix: "/api" })
         to: next.status,
       });
 
-      return { data: serializeInvoice(next) };
+      return {
+        data: serializeInvoice(next, listCreditNotes(tenantId, next.id)),
+      };
     },
     {
       body: t.Object({
@@ -195,6 +239,65 @@ export const app = new Elysia({ prefix: "/api" })
       }),
       params: t.Object({ id: t.String({ minLength: 1 }) }),
     }
+  )
+
+  .post(
+    "/invoices/:id/credit-notes",
+    ({ params, body, tenantId, log }) => {
+      const invoice = findInvoice(tenantId, params.id);
+      if (!invoice) {
+        throw notFound("invoice", params.id);
+      }
+
+      const existing = listCreditNotes(tenantId, invoice.id);
+      const rejection = validateCredit(invoice, existing, body.amountMinor);
+      if (rejection) {
+        throw rejection;
+      }
+
+      const note = putCreditNote({
+        id: nextId("cn"),
+        tenantId,
+        invoiceId: invoice.id,
+        reason: body.reason,
+        amountMinor: body.amountMinor,
+        currency: invoice.currency,
+      });
+
+      const before = creditedTotal(existing, invoice);
+      const after = creditedTotal([...existing, note], invoice);
+      log.info("credit_note.created", {
+        creditNoteId: note.id,
+        invoiceId: invoice.id,
+        amountMinor: note.amountMinor,
+        currency: note.currency,
+        creditedBeforeMinor: before.amountMinor,
+        creditedAfterMinor: after.amountMinor,
+      });
+
+      return { data: serializeCreditNote(note) };
+    },
+    {
+      params: t.Object({ id: t.String({ minLength: 1 }) }),
+      body: t.Object({
+        reason: t.String({ minLength: 1, maxLength: 200 }),
+        amountMinor: t.Integer({ minimum: 1 }),
+      }),
+    }
+  )
+
+  .get(
+    "/invoices/:id/credit-notes",
+    ({ params, tenantId }) => {
+      const invoice = findInvoice(tenantId, params.id);
+      if (!invoice) {
+        throw notFound("invoice", params.id);
+      }
+      return {
+        data: listCreditNotes(tenantId, invoice.id).map(serializeCreditNote),
+      };
+    },
+    { params: t.Object({ id: t.String({ minLength: 1 }) }) }
   );
 
 export type App = typeof app;

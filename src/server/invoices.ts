@@ -3,10 +3,10 @@
  * validation happens at the HTTP boundary, not here.
  */
 
-import type { AppError} from "#/lib/errors";
+import type { AppError } from "#/lib/errors";
 import { invalidState } from "#/lib/errors";
-import { money, multiply, sum } from '#/lib/money';
-import type { Money } from '#/lib/money';
+import { money, multiply, sum } from "#/lib/money";
+import type { Money } from "#/lib/money";
 
 import type { Invoice, InvoiceStatus, LineItem } from "./store";
 
