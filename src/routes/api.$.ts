@@ -2,8 +2,8 @@ import { treaty } from "@elysiajs/eden";
 import { createFileRoute } from "@tanstack/react-router";
 import { createIsomorphicFn } from "@tanstack/react-start";
 
-import { app } from '#/server/app';
-import type { App } from '#/server/app';
+import { app } from "#/server/app";
+import type { App } from "#/server/app";
 
 const handle = ({ request }: { request: Request }) => app.fetch(request);
 
