@@ -66,7 +66,7 @@ export const app = new Elysia({ prefix: "/api" })
 
     if (code === "VALIDATION") {
       // The validator's message names internal paths and types, so it goes to
-      // the log, not to the client (CODING_STANDARDS E5).
+      // the log, not to the client (CODING_STANDARDS E4).
       scoped.warn("request.invalid", {
         method: request.method,
         path: new URL(request.url).pathname,
