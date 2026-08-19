@@ -72,7 +72,9 @@ export function createLogger(
   const threshold = LEVEL_RANK[minLevel()];
 
   function emit(level: LogLevel, event: string, fields: LogFields = {}): void {
-    if (LEVEL_RANK[level] < threshold) {return;}
+    if (LEVEL_RANK[level] < threshold) {
+      return;
+    }
     sink(
       JSON.stringify({
         event,

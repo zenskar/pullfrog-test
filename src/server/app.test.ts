@@ -18,7 +18,8 @@ function call(
 
   return app.handle(
     new Request(`${BASE}${path}`, {
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body:
+        options.body === undefined ? undefined : JSON.stringify(options.body),
       headers,
       method,
     })
@@ -45,6 +46,15 @@ async function createInvoice(tenant = "tenant_a") {
   });
   const payload = await res.json();
   return payload.data;
+}
+
+async function openInvoice(tenant = "tenant_a") {
+  const invoice = await createInvoice(tenant);
+  await call("POST", `/api/invoices/${invoice.id}/status`, {
+    body: { status: "open" },
+    tenant,
+  });
+  return invoice;
 }
 
 describe("billing API", () => {
@@ -99,7 +109,9 @@ describe("billing API", () => {
       const res = await call("POST", "/api/invoices", {
         body: {
           customerId: customer.id,
-          lineItems: [{ description: "Seat", quantity: 1, unitAmountMinor: 100 }],
+          lineItems: [
+            { description: "Seat", quantity: 1, unitAmountMinor: 100 },
+          ],
         },
         tenant: "tenant_b",
       });
@@ -149,6 +161,138 @@ describe("billing API", () => {
       expect(res.status).toBe(409);
       const { error } = await res.json();
       expect(error.code).toBe("invalid_state");
+    });
+  });
+
+  describe("POST /api/invoices/:id/credit-notes", () => {
+    it("credits an open invoice and reduces the net total", async () => {
+      const invoice = await openInvoice();
+
+      const res = await call(
+        "POST",
+        `/api/invoices/${invoice.id}/credit-notes`,
+        {
+          body: { amountMinor: 1997, reason: "goodwill" },
+        }
+      );
+      expect(res.status).toBe(200);
+
+      const { data } = await res.json();
+      expect(data.amountMinor).toBe(1997);
+      expect(data.currency).toBe("USD");
+
+      const after = await call("GET", `/api/invoices/${invoice.id}`);
+      const payload = await after.json();
+      expect(payload.data.creditedMinor).toBe(1997);
+      expect(payload.data.netMinor).toBe(4000);
+    });
+
+    it("422s when the credit exceeds the invoice total", async () => {
+      const invoice = await openInvoice();
+
+      const res = await call(
+        "POST",
+        `/api/invoices/${invoice.id}/credit-notes`,
+        {
+          body: { amountMinor: 5998, reason: "too much" },
+        }
+      );
+
+      expect(res.status).toBe(422);
+      const { error } = await res.json();
+      expect(error.code).toBe("credit_exceeds_invoice");
+    });
+
+    it("409s when crediting a draft invoice", async () => {
+      const invoice = await createInvoice();
+
+      const res = await call(
+        "POST",
+        `/api/invoices/${invoice.id}/credit-notes`,
+        {
+          body: { amountMinor: 100, reason: "early" },
+        }
+      );
+
+      expect(res.status).toBe(409);
+      const { error } = await res.json();
+      expect(error.code).toBe("invalid_state");
+    });
+
+    it("422s when the amount is zero or negative", async () => {
+      const invoice = await openInvoice();
+
+      const res = await call(
+        "POST",
+        `/api/invoices/${invoice.id}/credit-notes`,
+        {
+          body: { amountMinor: 0, reason: "nothing" },
+        }
+      );
+      expect(res.status).toBe(422);
+    });
+
+    it("422s when the reason is empty", async () => {
+      const invoice = await openInvoice();
+
+      const res = await call(
+        "POST",
+        `/api/invoices/${invoice.id}/credit-notes`,
+        {
+          body: { amountMinor: 100, reason: "" },
+        }
+      );
+      expect(res.status).toBe(422);
+    });
+
+    it("404s when the invoice belongs to another tenant", async () => {
+      const invoice = await openInvoice("tenant_a");
+
+      const res = await call(
+        "POST",
+        `/api/invoices/${invoice.id}/credit-notes`,
+        {
+          body: { amountMinor: 100, reason: "cross tenant" },
+          tenant: "tenant_b",
+        }
+      );
+
+      expect(res.status).toBe(404);
+      const { error } = await res.json();
+      expect(error.code).toBe("not_found");
+    });
+  });
+
+  describe("GET /api/invoices/:id/credit-notes", () => {
+    it("lists only the credit notes for that invoice", async () => {
+      const invoice = await openInvoice();
+      await call("POST", `/api/invoices/${invoice.id}/credit-notes`, {
+        body: { amountMinor: 500, reason: "one" },
+      });
+      await call("POST", `/api/invoices/${invoice.id}/credit-notes`, {
+        body: { amountMinor: 700, reason: "two" },
+      });
+
+      const res = await call("GET", `/api/invoices/${invoice.id}/credit-notes`);
+      const { data } = await res.json();
+
+      expect(data).toHaveLength(2);
+      expect(
+        data.map((n: { amountMinor: number }) => n.amountMinor)
+      ).toStrictEqual([500, 700]);
+    });
+
+    it("404s when the invoice belongs to another tenant", async () => {
+      const invoice = await openInvoice("tenant_a");
+      const res = await call(
+        "GET",
+        `/api/invoices/${invoice.id}/credit-notes`,
+        {
+          tenant: "tenant_b",
+        }
+      );
+
+      expect(res.status).toBe(404);
     });
   });
 });
