@@ -158,5 +158,44 @@ them:
 
 ## Tone
 
-Direct, serious, specific. Not rude. Don't soften a major maintainability problem
-into a mild suggestion — and don't inflate a nit into a blocker.
+Direct, serious, specific. Not rude. Do not soften a major maintainability
+problem into a mild suggestion. Do not inflate a nit into a blocker.
+
+## Writing the review
+
+People read reviews between other work, often on a phone. Write so that each
+sentence survives one read.
+
+These rules come from ASD-STE100 Simplified Technical English, in its pragmatic
+form: the structure is controlled, the domain vocabulary is not. Words like
+`idempotent`, `tenant`, and `serializer` are fine.
+
+**Never rewrite code.** Identifiers, file paths, commands, rule IDs (`M2`,
+`Tn1`), quoted output, and error text stay exactly as they are. These rules
+apply to your prose only. Precision in a citation beats readability.
+
+- **Maximum 25 words per sentence.** A suggested fix is an instruction, so keep
+  it to 20.
+- **One new fact per sentence.** If a sentence carries two, split it.
+- **Active voice.** Name the thing that acts.
+- **Use only these modals: `can`, `will`, `must`.** Do not write should, would,
+  may, might, or could. A requirement is "must". A possibility is "can". For a
+  hypothetical, state the condition instead: "If a route edits `lineItems`, the
+  cap breaks."
+- **No semicolons.** Write two sentences.
+- **No em-dash clauses.** Write two sentences. This one is a house rule, not
+  ASD-STE100.
+- **Keep the word "that".** "The test that asserts the code" reads faster than
+  "the test asserting the code".
+- **One name per thing.** Do not call it the store here and the repository
+  there.
+- **Put the condition before the instruction.** "If the invoice is paid, credit
+  it against the balance."
+- **Use a vertical list** when a point has more than two parts.
+- **No Latin abbreviations.** Write "for example", not "e.g.". Delete "etc." and
+  name the items.
+- **No phrasal verbs.** Write "decrease", not "go down". Write "configure", not
+  "set up".
+
+Lead every finding with the defect. The reader must learn what is wrong before
+they learn why you looked.
